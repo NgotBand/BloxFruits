@@ -214,18 +214,26 @@ end
 -- Mini UI Buttons
 -- =========================
 local function createMiniToggle(name, position, stateVarRef, realVarSetter)
-	local playerGui = player:WaitForChild("PlayerGui")
-    if playerGui:FindFirstChild(name .. "MiniToggleGui") then
-        playerGui[name .. "MiniToggleGui"]:Destroy()
+    local playerGui = player:WaitForChild("PlayerGui")
+    
+    -- Xóa GUI cũ nếu tồn tại
+    local oldGui = playerGui:FindFirstChild(name .. "MiniToggleGui")
+    if oldGui then
+        oldGui:Destroy()
     end
     
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = name .. "MiniToggleGui"
     screenGui.ResetOnSpawn = false
-    screenGui.Parent = player:WaitForChild("PlayerGui")
+    screenGui.IgnoreGuiInset = true
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Global -- Để UI game luôn trên cùng
+    screenGui.DisplayOrder = 0 -- Đảm bảo UI game có độ ưu tiên cao hơn
+    screenGui.AutoLocalize = false -- Tránh xung đột localization
+    screenGui.Enabled = true
+    screenGui.Parent = playerGui
 
     local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 70, 0, 40) 
+    button.Size = UDim2.new(0, 70, 0, 40)
     button.Position = position
     button.Text = name .. (stateVarRef.value and " ON" or " OFF")
     button.TextScaled = true
@@ -233,6 +241,7 @@ local function createMiniToggle(name, position, stateVarRef, realVarSetter)
     button.TextColor3 = Color3.fromRGB(255, 255, 255)
     button.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     button.BorderSizePixel = 0
+    button.ZIndex = 9999 -- Đảm bảo button hiển thị trên cùng
     button.Parent = screenGui
 
     local uicorner = Instance.new("UICorner")
@@ -443,39 +452,33 @@ local function watchDamageCounter()
     watchDamageActive = true
 
     task.spawn(function()
-        while watchDamageActive do
+        local attempts = 0
+        while watchDamageActive and attempts < 10 do
             local gui = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("Main")
-            if not gui then
-                task.wait(1)
-                continue
-            end
-
-            local dmgCounter = gui:FindFirstChild("DmgCounter")
-            if not dmgCounter then
-                task.wait(1)
-                continue
-            end
-
-            local dmgTextLabel = dmgCounter:FindFirstChild("Text")
-            if not dmgTextLabel then
-                task.wait(1)
-                continue
-            end
-
-            dmgConn = dmgTextLabel:GetPropertyChangedSignal("Text"):Connect(function()
-                local dmgText = tonumber(dmgTextLabel.Text) or 0
-                if dmgText > 0 and canTilt() and currentHighlight then
-                    tiltEnabled = true
-                    if next(rightTouches) then
-                        startTilt()
+            if gui then
+                local dmgCounter = gui:FindFirstChild("DmgCounter")
+                if dmgCounter then
+                    local dmgTextLabel = dmgCounter:FindFirstChild("Text")
+                    if dmgTextLabel then
+                        dmgConn = dmgTextLabel:GetPropertyChangedSignal("Text"):Connect(function()
+                            local dmgText = tonumber(dmgTextLabel.Text) or 0
+                            if dmgText > 0 and canTilt() and currentHighlight then
+                                tiltEnabled = true
+                                if next(rightTouches) then
+                                    startTilt()
+                                end
+                            else
+                                tiltEnabled = false
+                                stopTiltSmooth()
+                            end
+                        end)
+                        table.insert(characterConnections, dmgConn)
+                        return
                     end
-                else
-                    tiltEnabled = false
-                    stopTiltSmooth()
                 end
-            end)
-            table.insert(characterConnections, dmgConn)
-            break
+            end
+            task.wait(1)
+            attempts = attempts + 1
         end
     end)
 end
@@ -503,16 +506,20 @@ local function watchHealth(humanoid)
 end
 
 local function setAimlockTarget(targetModel)
-    if currentHighlight then
-        currentHighlight:Destroy()
-        currentHighlight = nil
-    end
+    pcall(function()
+        if currentHighlight then
+            currentHighlight:Destroy()
+            currentHighlight = nil
+        end
+    end)
 
     if not targetModel then
-        if dmgConn then
-            pcall(function() dmgConn:Disconnect() end)
-            dmgConn = nil
-        end
+        pcall(function()
+            if dmgConn then
+                dmgConn:Disconnect()
+                dmgConn = nil
+            end
+        end)
         currentTarget = nil
         return
     end
@@ -524,13 +531,21 @@ local function setAimlockTarget(targetModel)
     end
 
     if targetModel:IsA("Model") then
+        -- Xóa highlight cũ nếu có
+        if currentHighlight then
+            currentHighlight:Destroy()
+            currentHighlight = nil
+        end
+        
         local highlight = Instance.new("Highlight")
         highlight.FillColor = Color3.fromRGB(255, 255, 0)
         highlight.OutlineColor = Color3.fromRGB(255, 255, 0)
         highlight.FillTransparency = 0.5
         highlight.OutlineTransparency = 0
         highlight.Adornee = targetModel
-        highlight.Parent = targetModel
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        -- Đặt highlight vào CoreGui thay vì PlayerGui để tránh xung đột UI
+        highlight.Parent = game:GetService("CoreGui")
         currentHighlight = highlight
 
         if dmgConn then
@@ -539,16 +554,20 @@ local function setAimlockTarget(targetModel)
         end
 
         local diedConn = humanoid.Died:Connect(function()
-            if currentHighlight then
-                currentHighlight:Destroy()
-                currentHighlight = nil
-            end
+            pcall(function()
+                if currentHighlight then
+                    currentHighlight:Destroy()
+                    currentHighlight = nil
+                end
+            end)
             currentTarget = nil
 
-            if dmgConn then
-                pcall(function() dmgConn:Disconnect() end)
-                dmgConn = nil
-            end
+            pcall(function()
+                if dmgConn then
+                    dmgConn:Disconnect()
+                    dmgConn = nil
+                end
+            end)
 
             if tiltEnabled then
                 tiltEnabled = false
@@ -571,21 +590,25 @@ local function startRenderLoop()
     end
 
     renderConnTilt = RunService.RenderStepped:Connect(function(dt)
+        -- Thoát ngay nếu không có target
         if not AimlockPlayerEnabled and not AimlockNpcEnabled then
-            renderConnTilt:Disconnect()
-            renderConnTilt = nil
+            if renderConnTilt then
+                renderConnTilt:Disconnect()
+                renderConnTilt = nil
+            end
             return
         end
 
+        -- Kiểm tra camera an toàn
+        if not camera or not camera.Parent then return end
+        
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then 
-            return 
-        end
+        if not hrp then return end
 
         if AimlockPlayerEnabled then
-            if not cachedEnemy 
-                or not cachedEnemy.Parent 
-                or not cachedEnemy.Parent:FindFirstChildOfClass("Humanoid") 
+            if not cachedEnemy
+                or not cachedEnemy.Parent
+                or not cachedEnemy.Parent:FindFirstChildOfClass("Humanoid")
                 or cachedEnemy.Parent:FindFirstChildOfClass("Humanoid").Health <= 0 then
                 cachedEnemy = getNearestEnemy(500)
             end
@@ -594,9 +617,9 @@ local function startRenderLoop()
         end
 
         if AimlockNpcEnabled then
-            if not cachedBoss 
-                or not cachedBoss.Parent 
-                or not cachedBoss.Parent:FindFirstChildOfClass("Humanoid") 
+            if not cachedBoss
+                or not cachedBoss.Parent
+                or not cachedBoss.Parent:FindFirstChildOfClass("Humanoid")
                 or cachedBoss.Parent:FindFirstChildOfClass("Humanoid").Health <= 0 then
                 cachedBoss = getNearestBoss(500)
             end
@@ -604,37 +627,45 @@ local function startRenderLoop()
             cachedBoss = nil
         end
 
+        -- Chỉ thay đổi camera khi thực sự cần thiết
         if not tiltEnabled then
             local targetHRP = nil
             if AimlockPlayerEnabled then targetHRP = cachedEnemy end
             if AimlockNpcEnabled then targetHRP = cachedBoss end
 
-            if targetHRP then
+            if targetHRP and targetHRP.Parent then
                 local camCFrame = camera.CFrame
                 local camPos = camCFrame.Position
                 local dist = (targetHRP.Position - camPos).Magnitude
-                local predictionTime = PredictionAmount
-                local enemyVelocity = targetHRP.Velocity
-                local predictedPos = targetHRP.Position
+                
+                -- Chỉ aim nếu mục tiêu trong tầm hợp lệ
+                if dist < 1000 then
+                    local predictionTime = PredictionAmount
+                    local enemyVelocity = targetHRP.Velocity
+                    local predictedPos = targetHRP.Position
 
-                if PredictionEnabled and enemyVelocity.Magnitude > 3 then
-                    predictedPos = predictedPos + enemyVelocity * predictionTime
+                    if PredictionEnabled and enemyVelocity.Magnitude > 3 then
+                        predictedPos = predictedPos + enemyVelocity * predictionTime
+                    end
+
+                    local yOffset = math.clamp(dist / 40, 0, 0.06)
+                    local lookVector = (predictedPos - camPos).Unit
+                    local tiltedlook = Vector3.new(lookVector.X, lookVector.Y - yOffset, lookVector.Z).Unit
+                    camera.CFrame = CFrame.new(camPos, camPos + tiltedlook)
                 end
-
-                local yOffset = math.clamp(dist / 40, 0, 0.06)
-                local lookVector = (predictedPos - camPos).Unit
-                local tiltedlook = Vector3.new(lookVector.X, lookVector.Y - yOffset, lookVector.Z).Unit
-                camera.CFrame = CFrame.new(camPos, camPos + tiltedlook)
             end
         end
 
-        if AimlockPlayerEnabled and cachedEnemy and currentTarget ~= cachedEnemy.Parent then
-            setAimlockTarget(cachedEnemy.Parent)
-        elseif AimlockNpcEnabled and cachedBoss and currentTarget ~= cachedBoss.Parent then
-            setAimlockTarget(cachedBoss.Parent)
-        elseif not cachedEnemy and not cachedBoss and currentTarget then
-            setAimlockTarget(nil)
-        end
+        -- Cập nhật target
+        pcall(function()
+            if AimlockPlayerEnabled and cachedEnemy and currentTarget ~= cachedEnemy.Parent then
+                setAimlockTarget(cachedEnemy.Parent)
+            elseif AimlockNpcEnabled and cachedBoss and currentTarget ~= cachedBoss.Parent then
+                setAimlockTarget(cachedBoss.Parent)
+            elseif not cachedEnemy and not cachedBoss and currentTarget then
+                setAimlockTarget(nil)
+            end
+        end)
     end)
 end
 
