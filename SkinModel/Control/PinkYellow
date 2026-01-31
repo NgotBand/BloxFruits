@@ -2212,7 +2212,7 @@ L_1_[16] = (loadstring(game:HttpGet(L_1_[2]({
 }))))()
 L_1_[38] = L_1_[16]:MakeWindow({
 	["Title"] = "Dac Cau Skid";
-	["SubTitle"] = "by DucLuong KeoCon",
+	["SubTitle"] = "by realtboy",
 	["SaveFolder"] = "redz library V5.json"
 })
 L_1_[87] = Instance["new"]("ScreenGui")
