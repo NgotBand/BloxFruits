@@ -1,0 +1,189 @@
+-- Aim Lock Simple & Effective
+-- Fix UI Issue + Aim Player + Aim NPC
+
+local Players = game:GetService("Players")
+local camera = workspace.CurrentCamera
+local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+local AimModule = {}
+
+-- Settings
+local Settings = {
+    AimPlayer = false,
+    AimNPC = false,
+    Prediction = false,
+    PredictionAmount = 0.1,
+    Smoothness = 0.1,
+    Range = 500,
+    AimPart = "Head" -- Head, HumanoidRootPart
+}
+
+local currentTarget = nil
+local connection = nil
+
+-- Find nearest enemy player
+local function getNearestPlayer()
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    
+    local nearest, shortest = nil, Settings.Range
+    
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local targetHRP = p.Character:FindFirstChild("HumanoidRootPart")
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            
+            if targetHRP and humanoid and humanoid.Health > 0 then
+                -- Check team (Pirates vs Marines)
+                local isEnemy = true
+                if player.Team and p.Team then
+                    if player.Team.Name == "Pirates" and p.Team.Name == "Pirates" then
+                        isEnemy = false
+                    elseif player.Team.Name == "Marines" and p.Team.Name == "Marines" then
+                        isEnemy = false
+                    elseif player.Team.Name == "Pirates" and p.Team.Name == "Marines" then
+                        isEnemy = true
+                    elseif player.Team.Name == "Marines" and p.Team.Name == "Pirates" then
+                        isEnemy = true
+                    else
+                        isEnemy = false
+                    end
+                end
+                
+                if isEnemy then
+                    local dist = (targetHRP.Position - hrp.Position).Magnitude
+                    if dist < shortest then
+                        shortest = dist
+                        nearest = targetHRP
+                    end
+                end
+            end
+        end
+    end
+    
+    return nearest
+end
+
+-- Find nearest NPC/Boss
+local function getNearestNPC()
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    
+    local nearest, shortest = nil, Settings.Range
+    local enemiesFolder = workspace:FindFirstChild("Enemies")
+    
+    if enemiesFolder then
+        for _, npc in pairs(enemiesFolder:GetChildren()) do
+            local npcHRP = npc:FindFirstChild("HumanoidRootPart")
+            local humanoid = npc:FindFirstChildOfClass("Humanoid")
+            
+            if npcHRP and humanoid and humanoid.Health > 0 then
+                local dist = (npcHRP.Position - hrp.Position).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    nearest = npcHRP
+                end
+            end
+        end
+    end
+    
+    return nearest
+end
+
+-- Aim function
+local function aimAt(targetHRP)
+    if not targetHRP or not targetHRP.Parent then return end
+    
+    local targetPart = targetHRP:FindFirstChild(Settings.AimPart) or targetHRP
+    if not targetPart then return end
+    
+    local camPos = camera.CFrame.Position
+    local targetPos = targetPart.Position
+    
+    -- Prediction
+    if Settings.Prediction then
+        local velocity = targetHRP.Velocity
+        if velocity.Magnitude > 1 then
+            targetPos = targetPos + velocity * Settings.PredictionAmount
+        end
+    end
+    
+    -- Smooth aim
+    local currentCFrame = camera.CFrame
+    local targetCFrame = CFrame.new(camPos, targetPos)
+    camera.CFrame = currentCFrame:Lerp(targetCFrame, Settings.Smoothness)
+end
+
+-- Main loop
+local function startAiming()
+    if connection then return end
+    
+    connection = RunService.RenderStepped:Connect(function()
+        if not Settings.AimPlayer and not Settings.AimNPC then return end
+        
+        local target = nil
+        
+        if Settings.AimPlayer then
+            target = getNearestPlayer()
+        end
+        
+        if not target and Settings.AimNPC then
+            target = getNearestNPC()
+        end
+        
+        if target then
+            aimAt(target)
+        end
+    end)
+end
+
+local function stopAiming()
+    if connection then
+        connection:Disconnect()
+        connection = nil
+    end
+end
+
+-- Public API
+function AimModule:TogglePlayerAim(state)
+    Settings.AimPlayer = state
+    if state then startAiming() end
+end
+
+function AimModule:ToggleNPCAim(state)
+    Settings.AimNPC = state
+    if state then startAiming() end
+end
+
+function AimModule:TogglePrediction(state)
+    Settings.Prediction = state
+end
+
+function AimModule:SetPredictionAmount(num)
+    Settings.PredictionAmount = num
+end
+
+function AimModule:SetSmoothness(num)
+    Settings.Smoothness = math.clamp(num, 0.01, 1)
+end
+
+function AimModule:SetAimPart(part)
+    Settings.AimPart = part
+end
+
+function AimModule:SetRange(num)
+    Settings.Range = num
+end
+
+function AimModule:GetSettings()
+    return Settings
+end
+
+function AimModule:Stop()
+    stopAiming()
+    Settings.AimPlayer = false
+    Settings.AimNPC = false
+end
+
+return AimModule
